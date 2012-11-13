@@ -29,9 +29,11 @@
 
 #define TIMEOUT		10000
 
-#define IPVANY		0x00
-#define IPV4ONLY	0x01
-#define IPV6ONLY	0x02
+enum ipversion {
+	IPVANY,
+	IPV4ONLY,
+	IPV6ONLY,
+};
 
 struct model {
 	/* status */
@@ -57,7 +59,7 @@ struct curl_write_buffer {
 };
 
 void		 usage(void);
-char		*fetch_data_string(const char *url, unsigned char ipresolve);
+char		*fetch_data_string(const char *url, enum ipversion ipresolve);
 struct model	*parse_model(char *status, char *cosm);
 void		 free_model(struct model *model);
 void		 init_curses(void);
@@ -72,16 +74,24 @@ int		 curl_writer(char *data, size_t size, size_t nmemb,
 int
 main(int argc, char *argv[])
 {
-	unsigned char ipresolve = IPVANY;
+	enum ipversion ipresolve = IPVANY;
 
 	int ch;
 	while ((ch = getopt(argc, argv, "h46")) != -1) {
 		switch (ch) {
 		case '4':
-			ipresolve |= IPV4ONLY;
+			if (ipresolve == IPV6ONLY) {
+				usage();
+				exit(EXIT_FAILURE);
+			}
+			ipresolve = IPV4ONLY;
 			break;
 		case '6':
-			ipresolve |= IPV6ONLY;
+			if (ipresolve == IPV4ONLY) {
+				usage();
+				exit(EXIT_FAILURE);
+			}
+			ipresolve = IPV6ONLY;
 			break;
 		case 'h':
 			usage();
@@ -90,11 +100,6 @@ main(int argc, char *argv[])
 			usage();
 			exit(EXIT_FAILURE);
 		}
-	}
-
-	if ((ipresolve & (IPV4ONLY | IPV6ONLY)) == (IPV4ONLY | IPV6ONLY)) {
-		usage();
-		exit(EXIT_FAILURE);
 	}
 
 	char *cosmkey = getenv("RZLCOSMKEY");
@@ -140,64 +145,69 @@ display(struct model *model)
 	clear();
 
 	attrset(A_NORMAL);
-	mvaddstr(0, 0, "RaumZeitStatus");
-	move(0, COLS - 24);
-	addstr(ctime(&(model->time)));
-
-	mvaddstr(2, 0, "Status:  ");
-	attron(A_BOLD);
+	mvaddstr(0, 0, "RaumZeitStatus ");
 	if (model->door) {
 		attron(COLOR_PAIR(1));
-		addstr("open");
+		printw("%6s", "[open]");
 	} else {
 		attron(COLOR_PAIR(2));
-		addstr("closed");
+		printw("%6s", "[closed]");
 	}
 	attrset(A_NORMAL);
 
-	mvaddstr(3, 0, "Devices: ");
+	move(0, COLS - 24);
+	addstr(ctime(&(model->time)));
+
+	mvprintw(2, 0, "%-9s", "Members:");
 	attron(A_BOLD);
-	printw("%d", model->devices);
+	printw("%3d", model->members);
 	attrset(A_NORMAL);
 
-	mvaddstr(4, 0, "Present: ");
+	mvprintw(3, 0, "%-9s", "Present:");
 	attron(A_BOLD);
-	printw("%d", model->present);
+	printw("%3d", model->present);
 	attrset(A_NORMAL);
 
-	mvaddstr(2, 20, "Members: ");
+	mvprintw(4, 0, "%-9s", "Devices:");
 	attron(A_BOLD);
-	printw("%d", model->members);
+	printw("%3d", model->devices);
 	attrset(A_NORMAL);
 
-	mvaddstr(3, 20, "Balance: ");
+	mvprintw(2, 17, "%-13s",  "Balance:");
 	attron(A_BOLD);
-	printw("%.2f ", model->balance);
+	printw("%7.2f ", model->balance);
 	attrset(A_NORMAL);
+	addstr("EUR");
 
-	mvaddstr(4, 20, "Temp:    ");
+	mvprintw(3, 17, "%-13s", "Temperature:");
 	attron(A_BOLD);
-	printw("%.1f ", model->temperature);
+	printw("%7.2f ", model->temperature);
 	attrset(A_NORMAL);
+	addstr("deg C");
 
-	mvaddstr(2, 40, "Drain:   ");
+	mvprintw(4, 17, "%-13s", "Latency:");
 	attron(A_BOLD);
-	printw("%.0f", model->drain);
+	printw("%7.2f ", model->latency);
 	attrset(A_NORMAL);
+	addstr("ms");
 
-	mvaddstr(3, 40, "Latency: ");
+	mvprintw(2, 48, "%-13s", "Power Drain:");
 	attron(A_BOLD);
-	printw("%.3f", model->latency);
+	printw("%4.0f ", model->drain);
 	attrset(A_NORMAL);
+	addstr("W");
 
-	mvaddstr(4, 40, "Up/Down: ");
+	mvprintw(3, 48, "%-13s", "Upload:");
 	attron(A_BOLD);
-	printw("%.0f", model->upload);
+	printw("%4.0f ", model->upload);
 	attrset(A_NORMAL);
-	addstr("/");
+	addstr("kB/s");
+
+	mvprintw(4, 48, "%-13s", "Download:");
 	attron(A_BOLD);
-	printw("%.0f", model->download);
+	printw("%4.0f ", model->download);
 	attrset(A_NORMAL);
+	addstr("kB/s");
 
 	int x = 0;
 	size_t xoff = 0;
@@ -480,10 +490,9 @@ curl_writer(char *data, size_t size, size_t nmemb,
 }
 
 char *
-fetch_data_string(const char *url, unsigned char ipresolve)
+fetch_data_string(const char *url, enum ipversion ipresolve)
 {
 	assert(url != NULL);
-	assert((ipresolve & (IPV4ONLY | IPV6ONLY)) != (IPV4ONLY | IPV6ONLY));
 
 	struct curl_write_buffer buffer = {
 		.malloced = 0,
@@ -500,10 +509,19 @@ fetch_data_string(const char *url, unsigned char ipresolve)
 	curl_easy_setopt(curl, CURLOPT_URL, url);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_writer);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
-	if (ipresolve & IPV4ONLY)
+
+	switch (ipresolve){
+	case (IPV4ONLY):
 		curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V4);
-	if (ipresolve & IPV6ONLY)
+		break;
+	case (IPV6ONLY):
 		curl_easy_setopt(curl, CURLOPT_IPRESOLVE, CURL_IPRESOLVE_V6);
+		break;
+	case (IPVANY):
+		curl_easy_setopt(curl, CURLOPT_IPRESOLVE,
+		    CURL_IPRESOLVE_WHATEVER);
+		break;
+	}
 
 	CURLcode result = curl_easy_perform(curl);
 	if (result != 0) {
