@@ -17,9 +17,10 @@
 #include <time.h>
 
 #include "ncrzlstat.h"
-#include "display.h"
+#include "ui.h"
 
-#define TIMEOUT		10000
+#define TIMEOUT		1000
+#define LIST_SPACING	5
 
 #define PV_GENERIC(X, Y, LBL, FMT, VAL, UNIT)	do {			\
 	mvprintw((X), (Y), "%-10s", (LBL));				\
@@ -38,8 +39,10 @@
 #define PV_DOUBLE_0(X, Y, LBL, VAL, UNIT)				\
 	PV_GENERIC((X), (Y), (LBL), "%4.0f    ", (VAL), (UNIT))
 
-int
-display(struct model *model)
+static void list_present(int y, int x, struct model *model);
+
+void
+ui_display(struct model *model)
 {
 	assert(model != NULL);
 
@@ -71,30 +74,13 @@ display(struct model *model)
 	PV_DOUBLE_0(3, 47, "Upload", model->upload, "kB/s");
 	PV_DOUBLE_0(4, 47, "Download:", model->download, "kB/s");
 
-	int x = 0;
-	size_t xoff = 0;
-	for (int i = 0; i < model->present; i++) {
-		int yoff = (i % (LINES - 6));
-		int y = yoff + 6;
-		if (i > 0 && yoff == 0) {
-			x += xoff + 5;
-			xoff = 0;
-		}
-
-		size_t namelen = strlen(model->presentnames[i]);
-		if (xoff < namelen)
-			xoff = namelen;
-
-		mvprintw(y, x, "%s", model->presentnames[i]);
-	}
+	list_present(6, 0, model);
 
 	refresh();
-
-	return getch();
 }
 
 void
-display_init(void)
+ui_init(void)
 {
 	initscr();
 	cbreak();
@@ -110,9 +96,64 @@ display_init(void)
 }
 
 void
-display_deinit(void)
+ui_deinit(void)
 {
 	endwin();
 }
 
+enum ui_event
+ui_getevent(void)
+{
+	enum ui_event event;
 
+#ifdef OLDCURSES
+	/*
+	 * This doupdate() is a workaround for a bug in older ncurses
+	 * implementations (at least needed for vanilla ncurses 5.7). If the
+	 * display won't redraw itself correctly after the terminal has been
+	 * resized, try this workaround.
+	 */
+	doupdate();
+#endif
+
+	int ch = getch();
+
+	switch (ch) {
+	case 'q':
+	case 'Q':
+		event = UI_QUIT;
+		break;
+	case KEY_RESIZE:
+		event = UI_RESIZE;
+		break;
+	default:
+		event = UI_UNDEFINED;
+		break;
+	}
+
+	return (event);
+}
+
+static void
+list_present(int y, int x, struct model *model)
+{
+	assert(y >= 0);
+	assert(x >= 0);
+	assert(model != NULL);
+
+	size_t xoff = 0;
+	for (int i = 0; i < model->present; i++) {
+		int yoff = (i % (LINES - y));
+		int abs_y = yoff + y;
+		if (i > 0 && yoff == 0) {
+			x += xoff + LIST_SPACING;
+			xoff = 0;
+		}
+
+		size_t namelen = strlen(model->presentnames[i]);
+		if (xoff < namelen)
+			xoff = namelen;
+
+		mvprintw(abs_y, x, "%s", model->presentnames[i]);
+	}
+}

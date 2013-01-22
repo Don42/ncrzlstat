@@ -16,10 +16,11 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "ncrzlstat.h"
-#include "display.h"
+#include "ui.h"
 #include "fetch.h"
 #include "parse.h"
 
@@ -68,32 +69,52 @@ main(int argc, char *argv[])
 	char *cosmurl;
 	asprintf(&cosmurl, COSMURL, cosmkey);
 
-	display_init();
-	atexit(&display_deinit);
+	ui_init();
+	atexit(&ui_deinit);
 
-	bool loop = true;
-	while (loop) {
+	enum ui_event event = UI_UNDEFINED;
+	while (event != UI_QUIT) {
 		char *status = fetch_data_string(STATUSURL, ipresolve);
 		assert(status != NULL);
 
 		char *cosm = fetch_data_string(cosmurl, ipresolve);
 		assert(cosm != NULL);
 
-		struct model *model = parse_fill_model(status, cosm);
-		assert(model != NULL);
+		bool loop = true;
+		bool refresh = true;
+		time_t last = time(NULL);
+		while (loop) {
+			if (refresh) {
+				refresh = false;
 
-		ch = display(model);
+				struct model *model = parse_fill_model(last,
+				    status, cosm);
+				assert(model != NULL);
+
+				ui_display(model);
+
+				parse_free_model(model);
+			}
+
+			event = ui_getevent();
+			switch (event) {
+			case UI_QUIT:
+				loop = false;
+				break;
+			case UI_RESIZE:
+				refresh = true;
+				break;
+			case UI_UNDEFINED:
+			default:
+				break;
+			}
+
+			if (last <= time(NULL) - REFRESH)
+				loop = false;
+		}
 
 		free(cosm);
 		free(status);
-		parse_free_model(model);
-
-		switch (ch) {
-		case 'q':
-		case 'Q':
-			loop = false;
-			break;
-		}
 	}
 
 	free(cosmurl);
